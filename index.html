@@ -1,0 +1,1284 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Working Hours</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-slate-50">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo, useRef, Fragment } = React;
+
+const STORAGE_KEY = 'mfg-ot-app-v1';
+const VERSION = 'V015';
+const PERSONNEL_DEFAULTS_VERSION = 'v10-41p'; // bump when DEFAULT_PERSONNEL changes
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbwRZ3A_nvX_-olruOEg_7bja79JUs0FlG7BupuGsPbfOsIIpNJ3YYhd-B_B0MaTsiW6Iw/exec';
+const DAY_LABELS = ['일','월','화','수','목','금','토'];
+
+const DEFAULT_PERSONNEL = [
+  { name: '박춘성', dept: 'TCP', hireDate: '2004-07-01', resignDate: null },
+  { name: '류정식', dept: 'TCP', hireDate: '2014-05-21', resignDate: null },
+  { name: '엄인순', dept: 'FE',  hireDate: '2001-02-06', resignDate: null },
+  { name: '황상일', dept: 'TCP', hireDate: '2014-02-01', resignDate: null },
+  { name: '이호인', dept: 'TCP', hireDate: '2020-10-12', resignDate: null },
+  { name: '정지호', dept: 'TCP', hireDate: '2021-03-01', resignDate: null },
+  { name: '최용환', dept: 'TCP', hireDate: '2021-03-01', resignDate: null },
+  { name: '이동욱', dept: 'TCP', hireDate: '2022-03-01', resignDate: null },
+  { name: '김동현', dept: 'TCP', hireDate: '2022-05-01', resignDate: null },
+  { name: '김성웅', dept: 'TCP', hireDate: '2023-03-01', resignDate: null },
+  { name: '김욱광', dept: 'TCP', hireDate: '2023-04-19', resignDate: null },
+  { name: '윤종성', dept: 'TCP', hireDate: '2023-05-22', resignDate: null },
+  { name: '조명훈', dept: 'TCP', hireDate: '2023-06-01', resignDate: null },
+  { name: '김혜민', dept: 'FE',  hireDate: '2023-08-28', resignDate: null },
+  { name: '이준호', dept: 'TCP', hireDate: '2024-09-02', resignDate: null },
+  { name: '김수빈', dept: 'TCP', hireDate: '2025-06-04', resignDate: null },
+  { name: '김문기', dept: 'TCP', hireDate: '2026-03-25', resignDate: '2026-04-02' },
+  { name: '권강표', dept: 'TCP', hireDate: '2026-04-13', resignDate: '2026-04-17' },
+  { name: '김진남', dept: 'TCP', hireDate: '2026-04-15', resignDate: '2026-04-17' },
+  { name: '이호준', dept: 'TCP', hireDate: '2026-04-20', resignDate: null },
+  { name: '박은숙', dept: 'FE',  hireDate: '2023-04-01', resignDate: null },
+  { name: '최수경', dept: 'FE',  hireDate: '2023-04-01', resignDate: null },
+  { name: '정성신', dept: 'FE',  hireDate: '2023-04-01', resignDate: null },
+  { name: '임혜윰', dept: 'FE',  hireDate: '2023-04-01', resignDate: null },
+  { name: '김상숙', dept: 'FE',  hireDate: '2023-04-01', resignDate: null },
+  { name: '정다영', dept: 'FE',  hireDate: '2023-04-01', resignDate: null },
+  { name: '김나영', dept: 'FE',  hireDate: '2023-04-01', resignDate: null },
+  { name: '황숙향', dept: 'FE',  hireDate: '2023-04-01', resignDate: null },
+  { name: '권미정', dept: 'FE',  hireDate: '2024-09-20', resignDate: null },
+  { name: '김혜민', dept: 'FE',  hireDate: '2023-04-01', resignDate: null },
+  { name: '맹지수', dept: 'FE',  hireDate: '2025-07-01', resignDate: null },
+  { name: '서연옥', dept: 'FE',  hireDate: '2025-07-02', resignDate: null },
+  { name: '정재은', dept: 'FE',  hireDate: '2025-12-04', resignDate: null },
+  { name: '김아람', dept: 'FE',  hireDate: '2025-12-29', resignDate: null },
+  { name: '엄인순', dept: 'FE',  hireDate: '2026-02-16', resignDate: null },
+  { name: '맹지현', dept: 'FE',  hireDate: '2026-03-16', resignDate: null },
+  { name: '안송채', dept: 'FE',  hireDate: '2026-04-06', resignDate: '2026-04-14' },
+  { name: '김유민', dept: 'FE',  hireDate: '2026-04-06', resignDate: '2026-04-10' },
+  { name: '김효선', dept: 'FE',  hireDate: '2026-04-20', resignDate: '2026-04-27' },
+  { name: '김선영', dept: 'FE',  hireDate: '2026-04-20', resignDate: null },
+  { name: '강수정', dept: 'FE',  hireDate: '2026-04-20', resignDate: null },
+];
+
+// ============== Helpers ==============
+function ymd(dt) {
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const d = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+function toYMD(v) {
+  if (v == null || v === '') return '';
+  // Excel serial number (most reliable path - no timezone issues)
+  if (typeof v === 'number') {
+    if (typeof XLSX !== 'undefined' && XLSX.SSF && XLSX.SSF.parse_date_code) {
+      const dc = XLSX.SSF.parse_date_code(v);
+      if (dc && dc.y) {
+        return `${dc.y}-${String(dc.m).padStart(2,'0')}-${String(dc.d).padStart(2,'0')}`;
+      }
+    }
+    // Fallback: Excel epoch is 1899-12-30 UTC
+    const ms = Math.round((v - 25569) * 86400 * 1000);
+    const dt = new Date(ms);
+    if (isNaN(dt)) return '';
+    return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}`;
+  }
+  // Date object - SheetJS produces UTC-based Dates, use UTC getters
+  if (v instanceof Date) {
+    if (isNaN(v)) return '';
+    return `${v.getUTCFullYear()}-${String(v.getUTCMonth()+1).padStart(2,'0')}-${String(v.getUTCDate()).padStart(2,'0')}`;
+  }
+  // String
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m1) {
+    let [_, mo, d, y] = m1;
+    if (y.length === 2) y = (Number(y) > 50 ? '19' : '20') + y;
+    return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
+  }
+  return '';
+}
+function isWeekend(ymdStr) {
+  const dt = new Date(ymdStr + 'T00:00:00');
+  const day = dt.getDay();
+  return day === 0 || day === 6;
+}
+function daysBetween(start, end) {
+  const out = [];
+  const s = new Date(start + 'T00:00:00');
+  const e = new Date(end + 'T00:00:00');
+  for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+    out.push(ymd(d));
+  }
+  return out;
+}
+function getMonthDays(year, month) {
+  const days = [];
+  const last = new Date(year, month, 0).getDate();
+  for (let i = 1; i <= last; i++) {
+    days.push(`${year}-${String(month).padStart(2,'0')}-${String(i).padStart(2,'0')}`);
+  }
+  return days;
+}
+function fmtHours(h) {
+  if (!h) return '0';
+  return Number(h).toFixed(1).replace(/\.0$/, '');
+}
+function safeStorage() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  } catch (e) {
+    return {};
+  }
+}
+function saveStorage(data) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    alert('저장 실패: localStorage 용량 초과 가능성');
+  }
+}
+
+// ============== Excel Parsing ==============
+function parseOTFile(buffer) {
+  // Read WITHOUT cellDates so dates stay as Excel serial numbers (timezone-safe)
+  const wb = XLSX.read(buffer, { type: 'array' });
+  const sheetName = wb.SheetNames.includes('OT보고서') ? 'OT보고서' : wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  const allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+
+  // Find header row by "이름" + "작업시간" (most reliable, since date col may be "일자" or "열1")
+  let hIdx = -1;
+  for (let i = 0; i < Math.min(15, allRows.length); i++) {
+    const row = (allRows[i] || []).map(c => String(c || '').trim());
+    if (row.includes('이름') && row.includes('작업시간')) { hIdx = i; break; }
+  }
+  if (hIdx === -1) throw new Error('헤더 행(이름·작업시간 포함)을 찾을 수 없습니다');
+
+  const headers = allRows[hIdx].map(h => String(h || '').trim());
+
+  // Date column: try multiple names (FE는 "일자", TCP는 "열1")
+  let idxDate = headers.indexOf('일자');
+  if (idxDate === -1) idxDate = headers.indexOf('열1');
+  if (idxDate === -1) idxDate = headers.indexOf('날짜');
+  // Last-resort fallback: scan columns and pick the one with most date-like values
+  if (idxDate === -1) {
+    let bestCol = -1, bestScore = 0;
+    for (let c = 0; c < headers.length; c++) {
+      let score = 0;
+      for (let r = hIdx + 1; r < Math.min(hIdx + 50, allRows.length); r++) {
+        if (toYMD((allRows[r] || [])[c])) score++;
+      }
+      if (score > bestScore) { bestScore = score; bestCol = c; }
+    }
+    if (bestScore >= 5) idxDate = bestCol;
+  }
+
+  const idxDept = headers.indexOf('부서');
+  const idxName = headers.indexOf('이름');
+  const idxHours = headers.indexOf('작업시간');
+
+  if (idxDate === -1 || idxName === -1 || idxHours === -1) {
+    throw new Error(`필수 컬럼 누락 (일자/이름/작업시간). 헤더: ${headers.join(', ')}`);
+  }
+
+  const records = [];
+  for (let i = hIdx + 1; i < allRows.length; i++) {
+    const row = allRows[i] || [];
+    if (!row[idxDate] || !row[idxName]) continue;
+    const dateStr = toYMD(row[idxDate]);
+    if (!dateStr) continue;
+    const hours = Number(row[idxHours]) || 0;
+    records.push({
+      date: dateStr,
+      dept: idxDept !== -1 ? String(row[idxDept] || '').trim() : '',
+      name: String(row[idxName]).trim(),
+      hours: hours,
+    });
+  }
+  return records;
+}
+
+function parseVacationFile(buffer) {
+  const wb = XLSX.read(buffer, { type: 'array' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+  return rows.map(r => ({
+    dept: String(r['소속'] || '').trim(),
+    name: String(r['Title'] || '').trim(),
+    type: String(r['휴가종류'] || '').trim(),
+    startDate: toYMD(r['휴가시작일']),
+    endDate: toYMD(r['휴가종료일']),
+    days: Number(r['휴가일수']) || 0,
+    cancelled: String(r['취소여부'] || '').trim() === '취소',
+  })).filter(v => v.name && v.startDate && v.endDate && !v.cancelled && v.days > 0);
+}
+
+// ============== Calc Engine ==============
+// Returns: { status, work, ot } per person per day
+// status: '미고용' | '퇴사' | '특근' | '근무' | '반차' | '휴가' | '주말'
+function calcDayForPerson(person, dateStr, otByKey, vacationByName, calendarOverride) {
+  if (dateStr < person.hireDate) return { status: '미고용', work: 0, ot: 0 };
+  if (person.resignDate && dateStr > person.resignDate) return { status: '퇴사', work: 0, ot: 0 };
+
+  const isWk = isWeekend(dateStr);
+  const override = calendarOverride[dateStr]; // '평일' | '특근' | undefined
+  const dayType = override || (isWk ? '특근' : '평일');
+
+  const otKey = `${dateStr}__${person.name}__${person.dept}`;
+  const otHours = otByKey[otKey] || 0;
+
+  if (dayType === '특근') {
+    // 특근일: only counted if worked (작업시간 = full hours)
+    return { status: '특근', work: otHours, ot: otHours };
+  }
+
+  // 평일: check vacation
+  const vac = findVacation(person, dateStr, vacationByName, calendarOverride, otByKey);
+  if (vac) {
+    if (vac.isHalfDay) {
+      // 반차: 4시간 고정, OT 못 더함
+      return { status: '반차', work: 4, ot: 0 };
+    }
+    return { status: '휴가', work: 0, ot: 0 };
+  }
+
+  // 일반 평일 근무
+  return { status: '근무', work: 8 + otHours, ot: otHours };
+}
+
+function findVacation(person, dateStr, vacationByName, calendarOverride, otByKey) {
+  const list = vacationByName[person.name] || [];
+  for (const v of list) {
+    if (dateStr < v.startDate || dateStr > v.endDate) continue;
+    // 다일 휴가일 경우 평일+비특근일에만 적용
+    if (v.startDate !== v.endDate) {
+      if (isWeekend(dateStr)) continue;
+      if (calendarOverride[dateStr] === '특근') continue;
+    }
+
+    // 반차 위치 결정
+    const fractional = (v.days % 1) === 0.5;
+    let isHalfDay = false;
+
+    if (fractional) {
+      if (v.startDate === v.endDate) {
+        // 단일일 + 0.5 → 그 날이 반차
+        isHalfDay = true;
+      } else {
+        // 다일 + .5 → 시작/종료 중 어느 날이 반차인지 결정
+        const halfDate = computeHalfDayDate(v, person, calendarOverride, otByKey);
+        isHalfDay = (halfDate === dateStr);
+      }
+    }
+    return { isHalfDay, type: v.type };
+  }
+  return null;
+}
+
+function computeHalfDayDate(v, person, calendarOverride, otByKey) {
+  // 휴가 범위 내 평일+비특근 날짜만 추출
+  const allDays = daysBetween(v.startDate, v.endDate);
+  const validDays = allDays.filter(d =>
+    !isWeekend(d) && calendarOverride[d] !== '특근'
+  );
+  if (validDays.length === 0) return null;
+  if (validDays.length === 1) return validDays[0];
+
+  const start = validDays[0];
+  const end = validDays[validDays.length - 1];
+  const hasOT = (date) => (otByKey[`${date}__${person.name}__${person.dept}`] || 0) > 0;
+
+  // 우선순위: 시작에 OT 없으면 시작 / 종료에 OT 없으면 종료 / 둘 다 OT 있으면 시작
+  if (!hasOT(start)) return start;
+  if (!hasOT(end)) return end;
+  return start;
+}
+
+// ============== Main App ==============
+function App() {
+  const [data, setData] = useState(() => {
+    const s = safeStorage();
+    return {
+      otTCP: s.otTCP || [],
+      otFE: s.otFE || [],
+      vacations: s.vacations || [],
+      personnel: s.personnel || [],
+      calendar: s.calendar || {},
+      lastUpdated: s.lastUpdated || {},
+      personnelDefaultsVersion: s.personnelDefaultsVersion || null,
+    };
+  });
+  const [tab, setTab] = useState('upload');
+  const skipNextAutoSync = useRef(false);
+  const initialLoadDone = useRef(false);
+
+  useEffect(() => { saveStorage(data); }, [data]);
+
+  // 앱 시작 시 최신 백업 자동 로드 + 인원 기본값 자동 동기화
+  useEffect(() => {
+    if (initialLoadDone.current) return;
+    initialLoadDone.current = true;
+    (async () => {
+      let loaded = null;
+      try {
+        const res = await fetch(`${GAS_URL}?action=latest`, { method: 'GET' });
+        const json = await res.json();
+        if (json.ok && json.data) loaded = json.data;
+      } catch (err) {
+        console.error('[sync] load failed:', err);
+      }
+      skipNextAutoSync.current = true;
+      setData(prev => {
+        const merged = loaded ? {
+          ...prev,
+          otTCP: loaded.otTCP || [],
+          otFE: loaded.otFE || [],
+          vacations: loaded.vacations || [],
+          personnel: loaded.personnel || [],
+          calendar: loaded.calendar || {},
+          lastUpdated: loaded.lastUpdated || {},
+          personnelDefaultsVersion: loaded.personnelDefaultsVersion || prev.personnelDefaultsVersion,
+        } : prev;
+        // 인원 기본값 버전이 다르면 자동 교체
+        if (merged.personnelDefaultsVersion !== PERSONNEL_DEFAULTS_VERSION) {
+          return {
+            ...merged,
+            personnel: [...DEFAULT_PERSONNEL],
+            personnelDefaultsVersion: PERSONNEL_DEFAULTS_VERSION,
+          };
+        }
+        return merged;
+      });
+    })();
+  }, []); // eslint-disable-line
+
+  // 데이터 변경시 자동 저장 (silent, 3초 debounce)
+  useEffect(() => {
+    if (skipNextAutoSync.current) {
+      skipNextAutoSync.current = false;
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const payload = {
+          filename: 'ot-backup-current.json',
+          data: {
+            otTCP: data.otTCP,
+            otFE: data.otFE,
+            vacations: data.vacations,
+            personnel: data.personnel,
+            calendar: data.calendar,
+            lastUpdated: data.lastUpdated,
+            personnelDefaultsVersion: data.personnelDefaultsVersion,
+            version: VERSION,
+            savedAt: new Date().toISOString(),
+          },
+        };
+        await fetch(GAS_URL, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+      } catch (err) {
+        console.error('[sync] save failed:', err);
+      }
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [data.otTCP, data.otFE, data.vacations, data.personnel, data.calendar]);
+
+  const update = (patch) => setData(prev => ({ ...prev, ...patch }));
+
+  return (
+    <div className="min-h-screen">
+      <header className="bg-slate-800 text-white shadow-md">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold">Working Hours</h1>
+            <p className="text-xs text-slate-300 mt-0.5">월별 총 작업시간 · 순수 OT 시간 집계</p>
+          </div>
+          <div className="text-right text-xs">
+            <span className="bg-blue-500 px-2 py-1 rounded font-mono">{VERSION}</span>
+          </div>
+        </div>
+        <nav className="max-w-7xl mx-auto px-6 flex gap-1">
+          {[
+            ['upload', '📤 업로드'],
+            ['personnel', '👥 인원관리'],
+            ['calendar', '📅 달력'],
+            ['report', '📊 월간 보고서'],
+          ].map(([k, label]) => (
+            <button key={k}
+              onClick={() => setTab(k)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition ${
+                tab === k
+                  ? 'border-blue-400 text-white'
+                  : 'border-transparent text-slate-300 hover:text-white'
+              }`}
+            >{label}</button>
+          ))}
+        </nav>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-6 py-6">
+        {tab === 'upload' && <UploadTab data={data} update={update} skipNextAutoSync={skipNextAutoSync} />}
+        {tab === 'personnel' && <PersonnelTab data={data} update={update} />}
+        {tab === 'calendar' && <CalendarTab data={data} update={update} />}
+        {tab === 'report' && <ReportTab data={data} />}
+      </main>
+    </div>
+  );
+}
+
+// ============== Upload Tab ==============
+function UploadTab({ data, update, skipNextAutoSync }) {
+  const handleFile = async (kind, file) => {
+    if (!file) return;
+    const buffer = await file.arrayBuffer();
+    try {
+      if (kind === 'vacation') {
+        const records = parseVacationFile(buffer);
+        update({
+          vacations: records,
+          lastUpdated: { ...data.lastUpdated, vacation: new Date().toLocaleString('ko-KR') },
+        });
+        alert(`휴가 파일 로드 완료: ${records.length}건`);
+      } else {
+        const records = parseOTFile(buffer);
+        const targetDept = kind === 'tcp' ? 'TCP' : 'FE';
+        // Filter by dept (defensive: in case of mixed file)
+        const filtered = records.filter(r => !r.dept || r.dept === targetDept);
+        const key = kind === 'tcp' ? 'otTCP' : 'otFE';
+        update({
+          [key]: filtered,
+          lastUpdated: { ...data.lastUpdated, [key]: new Date().toLocaleString('ko-KR') },
+        });
+        alert(`${targetDept} OT 파일 로드 완료: ${filtered.length}건`);
+      }
+    } catch (e) {
+      alert(`파일 파싱 실패: ${e.message}`);
+    }
+  };
+
+  const Card = ({ title, count, lastAt, kind, accept = '.xlsx' }) => (
+    <div className="bg-white rounded-lg shadow-sm p-5 border border-slate-200">
+      <h3 className="font-semibold text-slate-800 mb-3">{title}</h3>
+      <div className="text-sm text-slate-600 mb-3">
+        <div>📊 데이터: <span className="font-mono font-semibold">{count.toLocaleString()}건</span></div>
+        <div className="text-xs text-slate-500 mt-1">{lastAt ? `최근: ${lastAt}` : '미업로드'}</div>
+      </div>
+      <label className="block">
+        <span className="sr-only">파일 선택</span>
+        <input type="file" accept={accept}
+          onChange={(e) => handleFile(kind, e.target.files[0])}
+          className="block w-full text-xs text-slate-500
+            file:mr-3 file:py-2 file:px-4 file:rounded
+            file:border-0 file:text-xs file:font-semibold
+            file:bg-blue-50 file:text-blue-700
+            hover:file:bg-blue-100 cursor-pointer"
+        />
+      </label>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-900">
+        <strong>📁 파일 업로드 가이드</strong>
+        <ul className="mt-2 ml-5 list-disc text-xs space-y-1">
+          <li>OT 보고서 (TCP, FE 각각): 일자, 부서, 이름, 작업시간 컬럼 사용</li>
+          <li>휴가 파일: 소속, Title(이름), 휴가시작일, 휴가종료일, 휴가일수, 취소여부 사용</li>
+          <li>"취소여부=취소" 인 휴가는 자동 제외</li>
+          <li>업로드한 파일은 브라우저에 자동 저장됨 (덮어쓰기 가능)</li>
+        </ul>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card title="🔧 TCP OT 보고서" count={data.otTCP.length}
+          lastAt={data.lastUpdated.otTCP} kind="tcp" />
+        <Card title="🏭 FE OT 보고서" count={data.otFE.length}
+          lastAt={data.lastUpdated.otFE} kind="fe" />
+        <Card title="🏖️ 휴가 보고서" count={data.vacations.length}
+          lastAt={data.lastUpdated.vacation} kind="vacation" />
+      </div>
+
+      {(data.otTCP.length > 0 || data.otFE.length > 0 || data.vacations.length > 0) && (
+        <div className="bg-white rounded-lg shadow-sm p-5 border border-slate-200">
+          <h3 className="font-semibold text-slate-800 mb-3">📋 데이터 미리보기</h3>
+          <DataPreview data={data} />
+        </div>
+      )}
+
+      <div className="bg-white rounded-lg shadow-sm p-5 border border-slate-200">
+        <h3 className="font-semibold text-slate-800 mb-3">💾 백업 / 복원</h3>
+        <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900 mb-4">
+          정기적으로 백업파일을 다운로드해서 안전한 위치에 보관하세요.
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <button
+            onClick={() => {
+              const payload = {
+                version: VERSION,
+                exportedAt: new Date().toISOString(),
+                data: data,
+              };
+              const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+              a.href = url;
+              a.download = `OT집계_백업_${stamp}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            className="bg-blue-600 hover:bg-blue-700 text-white py-3 rounded font-medium text-sm flex items-center justify-center gap-2"
+          >
+            📥 백업 다운로드 (JSON)
+          </button>
+          <label className="bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded font-medium text-sm flex items-center justify-center gap-2 cursor-pointer">
+            📤 백업 복원
+            <input
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                try {
+                  const text = await file.text();
+                  const payload = JSON.parse(text);
+                  if (!payload.data || typeof payload.data !== 'object') {
+                    throw new Error('백업 파일 형식이 올바르지 않습니다');
+                  }
+                  if (!confirm(
+                    `백업파일 정보:\n` +
+                    `· 버전: ${payload.version || '?'}\n` +
+                    `· 내보낸 시각: ${payload.exportedAt || '?'}\n` +
+                    `· TCP OT: ${payload.data.otTCP?.length || 0}건\n` +
+                    `· FE OT: ${payload.data.otFE?.length || 0}건\n` +
+                    `· 휴가: ${payload.data.vacations?.length || 0}건\n` +
+                    `· 인원: ${payload.data.personnel?.length || 0}명\n\n` +
+                    `현재 데이터를 모두 덮어쓰시겠습니까?`
+                  )) { e.target.value = ''; return; }
+                  update({
+                    otTCP: payload.data.otTCP || [],
+                    otFE: payload.data.otFE || [],
+                    vacations: payload.data.vacations || [],
+                    personnel: payload.data.personnel || [],
+                    calendar: payload.data.calendar || {},
+                    lastUpdated: payload.data.lastUpdated || {},
+                  });
+                  alert('복원 완료!');
+                  e.target.value = '';
+                } catch (err) {
+                  alert(`복원 실패: ${err.message}`);
+                }
+              }}
+            />
+          </label>
+        </div>
+        <div className="mt-3 text-xs text-slate-500">
+          💡 백업 파일은 안전한 위치에 보관하시고, 다른 PC에서는 "백업 복원" 버튼으로 불러오세요.
+        </div>
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          onClick={() => {
+            if (confirm('모든 데이터를 삭제하시겠습니까? (인원/달력 포함)')) {
+              update({ otTCP: [], otFE: [], vacations: [], personnel: [], calendar: {}, lastUpdated: {} });
+            }
+          }}
+          className="text-xs text-red-600 hover:text-red-800"
+        >🗑️ 전체 데이터 삭제</button>
+      </div>
+    </div>
+  );
+}
+
+function DataPreview({ data }) {
+  const summary = useMemo(() => {
+    const tcpNames = new Set(data.otTCP.map(r => r.name));
+    const feNames = new Set(data.otFE.map(r => r.name));
+    const vacNames = new Set(data.vacations.map(r => r.name));
+    const tcpDates = data.otTCP.map(r => r.date).sort();
+    const feDates = data.otFE.map(r => r.date).sort();
+    return {
+      tcpNames: [...tcpNames].sort(),
+      feNames: [...feNames].sort(),
+      vacNames: [...vacNames].sort(),
+      tcpRange: tcpDates.length ? `${tcpDates[0]} ~ ${tcpDates[tcpDates.length-1]}` : '-',
+      feRange: feDates.length ? `${feDates[0]} ~ ${feDates[feDates.length-1]}` : '-',
+    };
+  }, [data]);
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+      <div>
+        <div className="font-semibold text-slate-700 mb-1">TCP 인원 ({summary.tcpNames.length})</div>
+        <div className="text-slate-600 mb-1">기간: {summary.tcpRange}</div>
+        <div className="bg-slate-50 p-2 rounded max-h-32 overflow-auto scrollbar-thin">
+          {summary.tcpNames.join(', ') || '없음'}
+        </div>
+      </div>
+      <div>
+        <div className="font-semibold text-slate-700 mb-1">FE 인원 ({summary.feNames.length})</div>
+        <div className="text-slate-600 mb-1">기간: {summary.feRange}</div>
+        <div className="bg-slate-50 p-2 rounded max-h-32 overflow-auto scrollbar-thin">
+          {summary.feNames.join(', ') || '없음'}
+        </div>
+      </div>
+      <div>
+        <div className="font-semibold text-slate-700 mb-1">휴가 인원 ({summary.vacNames.length})</div>
+        <div className="text-slate-600 mb-1">총 {data.vacations.length.toLocaleString()}건</div>
+        <div className="bg-slate-50 p-2 rounded max-h-32 overflow-auto scrollbar-thin">
+          {summary.vacNames.join(', ') || '없음'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============== Personnel Tab ==============
+function PersonnelTab({ data, update }) {
+  const [editing, setEditing] = useState(null);
+  const [filter, setFilter] = useState('all');
+
+  const allNames = useMemo(() => {
+    const tcp = new Set(data.otTCP.map(r => r.name).filter(Boolean));
+    const fe = new Set(data.otFE.map(r => r.name).filter(Boolean));
+    return { TCP: [...tcp].sort(), FE: [...fe].sort() };
+  }, [data]);
+
+  const personnel = useMemo(() => {
+    let list = [...data.personnel];
+    if (filter !== 'all') list = list.filter(p => p.dept === filter);
+    return list.sort((a, b) => (a.dept + a.name).localeCompare(b.dept + b.name, 'ko'));
+  }, [data.personnel, filter]);
+
+  const onSave = (p) => {
+    let next = data.personnel;
+    if (editing && editing._idx !== undefined) {
+      next = next.map((x, i) => i === editing._idx ? p : x);
+    } else {
+      next = [...next, p];
+    }
+    update({ personnel: next });
+    setEditing(null);
+  };
+
+  const onDelete = (idx) => {
+    if (!confirm('삭제하시겠습니까?')) return;
+    update({ personnel: data.personnel.filter((_, i) => i !== idx) });
+  };
+
+  const loadDefaults = () => {
+    if (!confirm(
+      `현재 등록된 인원 ${data.personnel.length}명을 모두 삭제하고\n` +
+      `기본 인원 ${DEFAULT_PERSONNEL.length}명으로 교체하시겠습니까?`
+    )) return;
+    update({
+      personnel: [...DEFAULT_PERSONNEL],
+      personnelDefaultsVersion: PERSONNEL_DEFAULTS_VERSION,
+    });
+    alert(`${DEFAULT_PERSONNEL.length}명으로 교체 완료`);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-lg shadow-sm p-5 border border-slate-200">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-slate-800">👥 인원 관리 ({data.personnel.length}명)</h3>
+          <div className="flex gap-2">
+            <select value={filter} onChange={e => setFilter(e.target.value)}
+              className="text-sm border border-slate-300 rounded px-2 py-1">
+              <option value="all">전체</option>
+              <option value="TCP">TCP</option>
+              <option value="FE">FE</option>
+            </select>
+            <button onClick={loadDefaults}
+              className="text-xs bg-amber-50 hover:bg-amber-100 px-3 py-1 rounded border border-amber-300 text-amber-800">
+              🔄 기본 인원으로 교체 ({DEFAULT_PERSONNEL.length}명)
+            </button>
+            <button onClick={() => setEditing({})}
+              className="text-sm bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">
+              + 인원 추가
+            </button>
+          </div>
+        </div>
+
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-slate-700">
+            <tr>
+              <th className="text-left px-3 py-2 font-medium">이름</th>
+              <th className="text-left px-3 py-2 font-medium">부서</th>
+              <th className="text-left px-3 py-2 font-medium">입사일</th>
+              <th className="text-left px-3 py-2 font-medium">퇴사일</th>
+              <th className="text-right px-3 py-2 font-medium w-32">작업</th>
+            </tr>
+          </thead>
+          <tbody>
+            {personnel.length === 0 && (
+              <tr><td colSpan={5} className="text-center py-8 text-slate-400">
+                인원이 없습니다. 위의 "인원 추가" 또는 "OT파일에서 일괄 추가" 버튼 사용
+              </td></tr>
+            )}
+            {personnel.map((p) => {
+              const idx = data.personnel.indexOf(p);
+              return (
+                <tr key={idx} className="border-t border-slate-100 hover:bg-slate-50">
+                  <td className="px-3 py-2 font-medium">{p.name}</td>
+                  <td className="px-3 py-2">
+                    <span className={`text-xs px-2 py-0.5 rounded ${
+                      p.dept === 'TCP' ? 'bg-purple-100 text-purple-800' : 'bg-emerald-100 text-emerald-800'
+                    }`}>{p.dept}</span>
+                  </td>
+                  <td className="px-3 py-2 text-slate-600">{p.hireDate}</td>
+                  <td className="px-3 py-2 text-slate-600">{p.resignDate || <span className="text-slate-400">재직 중</span>}</td>
+                  <td className="px-3 py-2 text-right">
+                    <button onClick={() => setEditing({ ...p, _idx: idx })}
+                      className="text-xs text-blue-600 hover:underline mr-3">수정</button>
+                    <button onClick={() => onDelete(idx)}
+                      className="text-xs text-red-600 hover:underline">삭제</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {editing && (
+        <PersonnelForm
+          person={editing}
+          allNames={allNames}
+          onSave={onSave}
+          onCancel={() => setEditing(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function PersonnelForm({ person, allNames, onSave, onCancel }) {
+  const [name, setName] = useState(person.name || '');
+  const [dept, setDept] = useState(person.dept || 'FE');
+  const [hireDate, setHireDate] = useState(person.hireDate || '2024-01-01');
+  const [resignDate, setResignDate] = useState(person.resignDate || '');
+
+  const submit = () => {
+    if (!name.trim()) { alert('이름 필수'); return; }
+    if (!hireDate) { alert('입사일 필수'); return; }
+    if (resignDate && resignDate < hireDate) { alert('퇴사일은 입사일 이후여야 합니다'); return; }
+    onSave({
+      _idx: person._idx,
+      name: name.trim(),
+      dept,
+      hireDate,
+      resignDate: resignDate || null,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+      onClick={onCancel}>
+      <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <h3 className="font-semibold text-slate-800 mb-4">
+          {person._idx !== undefined ? '인원 수정' : '인원 추가'}
+        </h3>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">이름</label>
+            <input
+              type="text"
+              list="name-list"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
+              placeholder="이름 입력"
+            />
+            <datalist id="name-list">
+              {[...new Set([...allNames.TCP, ...allNames.FE])].map(n => (
+                <option key={n} value={n} />
+              ))}
+            </datalist>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">부서</label>
+            <select value={dept} onChange={e => setDept(e.target.value)}
+              className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+              <option value="TCP">TCP</option>
+              <option value="FE">FE</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">입사일</label>
+            <input type="date" value={hireDate} onChange={e => setHireDate(e.target.value)}
+              className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">
+              퇴사일 (재직 중이면 비워두기)
+            </label>
+            <input type="date" value={resignDate} onChange={e => setResignDate(e.target.value)}
+              className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onCancel}
+            className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded">취소</button>
+          <button onClick={submit}
+            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded">저장</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============== Calendar Tab ==============
+function CalendarTab({ data, update }) {
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1);
+
+  const days = useMemo(() => getMonthDays(year, month), [year, month]);
+  const firstDayOfWeek = new Date(year, month - 1, 1).getDay();
+
+  const toggleDay = (dateStr) => {
+    const isWk = isWeekend(dateStr);
+    const defaultType = isWk ? '특근' : '평일';
+    const current = data.calendar[dateStr] || defaultType;
+    const newType = current === '평일' ? '특근' : '평일';
+    const next = { ...data.calendar };
+    if (newType === defaultType) {
+      delete next[dateStr]; // remove override
+    } else {
+      next[dateStr] = newType;
+    }
+    update({ calendar: next });
+  };
+
+  const cellType = (dateStr) => {
+    const isWk = isWeekend(dateStr);
+    const def = isWk ? '특근' : '평일';
+    const override = data.calendar[dateStr];
+    return { type: override || def, isOverride: !!override, isWeekend: isWk };
+  };
+
+  const stats = useMemo(() => {
+    let pyeong = 0, teukgeun = 0;
+    for (const d of days) {
+      const t = cellType(d).type;
+      if (t === '특근') teukgeun++;
+      else pyeong++;
+    }
+    return { pyeong, teukgeun };
+  }, [days, data.calendar]);
+
+  const navMonth = (delta) => {
+    let m = month + delta;
+    let y = year;
+    if (m < 1) { m = 12; y--; }
+    if (m > 12) { m = 1; y++; }
+    setYear(y); setMonth(m);
+  };
+
+  // Build cells: leading empty + days
+  const cells = [];
+  for (let i = 0; i < firstDayOfWeek; i++) cells.push(null);
+  for (const d of days) cells.push(d);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
+        💡 토/일은 자동으로 <strong>특근일</strong>로 설정됩니다. 셀을 클릭하면 평일 ↔ 특근일을 전환할 수 있습니다.
+        설/추석 같은 공휴일이나 회사 특근일에 직접 토글하세요.
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm p-5 border border-slate-200">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <button onClick={() => navMonth(-1)}
+              className="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-100">‹</button>
+            <select value={year} onChange={e => setYear(Number(e.target.value))}
+              className="text-sm border border-slate-300 rounded px-2 py-1">
+              {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}년</option>)}
+            </select>
+            <select value={month} onChange={e => setMonth(Number(e.target.value))}
+              className="text-sm border border-slate-300 rounded px-2 py-1">
+              {Array.from({length: 12}, (_, i) => i + 1).map(m => (
+                <option key={m} value={m}>{m}월</option>
+              ))}
+            </select>
+            <button onClick={() => navMonth(1)}
+              className="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-100">›</button>
+          </div>
+          <div className="flex gap-3 text-xs">
+            <span className="flex items-center gap-1">
+              <span className="w-4 h-4 bg-white border border-slate-300 rounded inline-block"></span>
+              평일 ({stats.pyeong})
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-4 h-4 bg-amber-100 border border-amber-300 rounded inline-block"></span>
+              특근일 ({stats.teukgeun})
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-4 h-4 bg-blue-200 border border-blue-400 rounded inline-block"></span>
+              수동 변경
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-7 gap-1 text-center">
+          {DAY_LABELS.map((d, i) => (
+            <div key={d} className={`text-xs font-semibold py-2 ${i === 0 ? 'text-red-600' : i === 6 ? 'text-blue-600' : 'text-slate-700'}`}>
+              {d}
+            </div>
+          ))}
+          {cells.map((d, i) => {
+            if (!d) return <div key={i} className="h-20"></div>;
+            const dayNum = Number(d.slice(-2));
+            const dow = (i % 7);
+            const ci = cellType(d);
+            let bg = 'bg-white';
+            if (ci.type === '특근') bg = 'bg-amber-100';
+            if (ci.isOverride) bg = ci.type === '특근' ? 'bg-amber-200' : 'bg-blue-100';
+            return (
+              <button key={d}
+                onClick={() => toggleDay(d)}
+                className={`h-20 border border-slate-200 rounded p-1.5 text-left hover:ring-2 hover:ring-blue-400 transition ${bg}`}
+              >
+                <div className={`text-sm font-semibold ${dow === 0 ? 'text-red-600' : dow === 6 ? 'text-blue-600' : 'text-slate-800'}`}>
+                  {dayNum}
+                </div>
+                <div className={`text-xs mt-1 ${ci.type === '특근' ? 'text-amber-800' : 'text-slate-500'}`}>
+                  {ci.type}{ci.isOverride && ' *'}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={() => {
+              if (!confirm(`${year}년 ${month}월 수동 변경을 모두 초기화하시겠습니까?`)) return;
+              const next = { ...data.calendar };
+              const prefix = `${year}-${String(month).padStart(2,'0')}`;
+              for (const k of Object.keys(next)) {
+                if (k.startsWith(prefix)) delete next[k];
+              }
+              update({ calendar: next });
+            }}
+            className="text-xs text-slate-600 hover:text-red-600"
+          >
+            🔄 이번 달 초기화
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============== Report Tab ==============
+function ReportTab({ data }) {
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1);
+  const [filter, setFilter] = useState('all');
+  const [expanded, setExpanded] = useState(null);
+
+  const monthDays = useMemo(() => getMonthDays(year, month), [year, month]);
+
+  // Build OT lookup: key = date__name__dept → hours
+  const otByKey = useMemo(() => {
+    const map = {};
+    for (const r of [...data.otTCP, ...data.otFE]) {
+      const key = `${r.date}__${r.name}__${r.dept || ''}`;
+      map[key] = (map[key] || 0) + (r.hours || 0);
+    }
+    return map;
+  }, [data.otTCP, data.otFE]);
+
+  // Build vacation lookup: name → vacations
+  const vacByName = useMemo(() => {
+    const map = {};
+    for (const v of data.vacations) {
+      if (!map[v.name]) map[v.name] = [];
+      map[v.name].push(v);
+    }
+    return map;
+  }, [data.vacations]);
+
+  const report = useMemo(() => {
+    const list = data.personnel.filter(p => filter === 'all' || p.dept === filter);
+    return list.map(p => {
+      let totalWork = 0, totalOT = 0;
+      const counts = { 근무: 0, 반차: 0, 휴가: 0, 특근: 0, 미고용: 0, 퇴사: 0 };
+      const daily = [];
+      for (const d of monthDays) {
+        const r = calcDayForPerson(p, d, otByKey, vacByName, data.calendar);
+        totalWork += r.work;
+        totalOT += r.ot;
+        counts[r.status] = (counts[r.status] || 0) + 1;
+        daily.push({ date: d, ...r });
+      }
+      return { person: p, totalWork, totalOT, counts, daily };
+    }).sort((a, b) => (a.person.dept + a.person.name).localeCompare(b.person.dept + b.person.name, 'ko'));
+  }, [data.personnel, monthDays, otByKey, vacByName, data.calendar, filter]);
+
+  const totals = useMemo(() => {
+    let work = 0, ot = 0;
+    for (const r of report) { work += r.totalWork; ot += r.totalOT; }
+    return { work, ot };
+  }, [report]);
+
+  const exportExcel = () => {
+    const rows = report.map(r => ({
+      '부서': r.person.dept,
+      '이름': r.person.name,
+      '입사일': r.person.hireDate,
+      '퇴사일': r.person.resignDate || '',
+      '근무일': r.counts['근무'] || 0,
+      '특근일': r.counts['특근'] || 0,
+      '반차': r.counts['반차'] || 0,
+      '휴가일': r.counts['휴가'] || 0,
+      '총 작업시간': r.totalWork,
+      '순수 OT시간': r.totalOT,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `${year}년${month}월`);
+    XLSX.writeFile(wb, `OT집계_${year}-${String(month).padStart(2,'0')}_${filter === 'all' ? '전체' : filter}.xlsx`);
+  };
+
+  const navMonth = (delta) => {
+    let m = month + delta, y = year;
+    if (m < 1) { m = 12; y--; } if (m > 12) { m = 1; y++; }
+    setYear(y); setMonth(m);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-lg shadow-sm p-5 border border-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-2">
+            <button onClick={() => navMonth(-1)}
+              className="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-100">‹</button>
+            <select value={year} onChange={e => setYear(Number(e.target.value))}
+              className="text-sm border border-slate-300 rounded px-2 py-1">
+              {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}년</option>)}
+            </select>
+            <select value={month} onChange={e => setMonth(Number(e.target.value))}
+              className="text-sm border border-slate-300 rounded px-2 py-1">
+              {Array.from({length: 12}, (_, i) => i + 1).map(m => (
+                <option key={m} value={m}>{m}월</option>
+              ))}
+            </select>
+            <button onClick={() => navMonth(1)}
+              className="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-100">›</button>
+            <select value={filter} onChange={e => setFilter(e.target.value)}
+              className="text-sm border border-slate-300 rounded px-2 py-1 ml-2">
+              <option value="all">전체 부서</option>
+              <option value="TCP">TCP</option>
+              <option value="FE">FE</option>
+            </select>
+          </div>
+          <button onClick={exportExcel}
+            className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded">
+            📥 엑셀 다운로드
+          </button>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          <Stat label="대상 인원" value={`${report.length}명`} color="slate" />
+          <Stat label="총 작업시간" value={`${fmtHours(totals.work)} h`} color="blue" />
+          <Stat label="순수 OT시간" value={`${fmtHours(totals.ot)} h`} color="amber" />
+        </div>
+
+        {report.length === 0 ? (
+          <div className="text-center py-12 text-slate-400 text-sm">
+            인원이 등록되지 않았거나 필터에 해당하는 인원이 없습니다.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-700">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium">부서</th>
+                  <th className="text-left px-3 py-2 font-medium">이름</th>
+                  <th className="text-left px-2 py-2 font-medium">입사일</th>
+                  <th className="text-left px-2 py-2 font-medium">퇴사일</th>
+                  <th className="text-center px-2 py-2 font-medium">근무일</th>
+                  <th className="text-center px-2 py-2 font-medium">특근일</th>
+                  <th className="text-center px-2 py-2 font-medium">반차</th>
+                  <th className="text-center px-2 py-2 font-medium">휴가</th>
+                  <th className="text-right px-3 py-2 font-medium">총 작업시간</th>
+                  <th className="text-right px-3 py-2 font-medium">순수 OT</th>
+                  <th className="text-center px-3 py-2 font-medium">상세</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.map((r) => {
+                  const k = `${r.person.dept}__${r.person.name}__${r.person.hireDate}`;
+                  const isExp = expanded === k;
+                  const isHired = monthDays.some(d => d >= r.person.hireDate && (!r.person.resignDate || d <= r.person.resignDate));
+                  // 상세 일자 모음 (툴팁용)
+                  const teukgeunDays = r.daily.filter(d => d.status === '특근' && d.work > 0).map(d => Number(d.date.slice(-2)));
+                  const banchaDays = r.daily.filter(d => d.status === '반차').map(d => Number(d.date.slice(-2)));
+                  const hyugaDays = r.daily.filter(d => d.status === '휴가').map(d => Number(d.date.slice(-2)));
+                  const tooltipText = (label, days) =>
+                    days.length ? `${label}: ${days.join(', ')}일` : `${label} 없음`;
+                  return (
+                    <Fragment key={k}>
+                      <tr className={`border-t border-slate-100 hover:bg-slate-50 ${!isHired ? 'opacity-40' : ''}`}>
+                        <td className="px-3 py-2">
+                          <span className={`text-xs px-2 py-0.5 rounded ${
+                            r.person.dept === 'TCP' ? 'bg-purple-100 text-purple-800' : 'bg-emerald-100 text-emerald-800'
+                          }`}>{r.person.dept}</span>
+                        </td>
+                        <td className="px-3 py-2 font-medium">{r.person.name}</td>
+                        <td className="px-2 py-2 text-xs text-slate-600 font-mono">{r.person.hireDate}</td>
+                        <td className="px-2 py-2 text-xs text-slate-600 font-mono">
+                          {r.person.resignDate || <span className="text-slate-400">-</span>}
+                        </td>
+                        <td className="px-2 py-2 text-center text-slate-600">{r.counts['근무'] || 0}</td>
+                        <td className="px-2 py-2 text-center text-slate-600 cursor-help"
+                          title={tooltipText('특근', teukgeunDays)}>
+                          <span className={teukgeunDays.length ? 'border-b border-dotted border-slate-400' : ''}>
+                            {r.counts['특근'] || 0}
+                          </span>
+                        </td>
+                        <td className="px-2 py-2 text-center text-slate-600 cursor-help"
+                          title={tooltipText('반차', banchaDays)}>
+                          <span className={banchaDays.length ? 'border-b border-dotted border-slate-400' : ''}>
+                            {r.counts['반차'] || 0}
+                          </span>
+                        </td>
+                        <td className="px-2 py-2 text-center text-slate-600 cursor-help"
+                          title={tooltipText('휴가', hyugaDays)}>
+                          <span className={hyugaDays.length ? 'border-b border-dotted border-slate-400' : ''}>
+                            {r.counts['휴가'] || 0}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono font-semibold text-blue-700">
+                          {fmtHours(r.totalWork)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono font-semibold text-amber-700">
+                          {fmtHours(r.totalOT)}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <button onClick={() => setExpanded(isExp ? null : k)}
+                            className="text-xs text-blue-600 hover:underline">
+                            {isExp ? '▲ 닫기' : '▼ 보기'}
+                          </button>
+                        </td>
+                      </tr>
+                      {isExp && (
+                        <tr><td colSpan={11} className="bg-slate-50 px-3 py-3">
+                          <DailyBreakdown daily={r.daily} />
+                        </td></tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+              <tfoot className="border-t-2 border-slate-300 bg-slate-50">
+                <tr>
+                  <td colSpan={8} className="px-3 py-2 font-semibold text-right">합계</td>
+                  <td className="px-3 py-2 text-right font-mono font-bold text-blue-700">
+                    {fmtHours(totals.work)}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono font-bold text-amber-700">
+                    {fmtHours(totals.ot)}
+                  </td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, color }) {
+  const colorMap = {
+    slate: 'bg-slate-100 text-slate-700',
+    blue: 'bg-blue-100 text-blue-700',
+    amber: 'bg-amber-100 text-amber-700',
+  };
+  return (
+    <div className={`rounded-lg p-3 ${colorMap[color]}`}>
+      <div className="text-xs">{label}</div>
+      <div className="text-2xl font-bold mt-1">{value}</div>
+    </div>
+  );
+}
+
+function DailyBreakdown({ daily }) {
+  const statusColor = {
+    근무: 'bg-white text-slate-700',
+    특근: 'bg-amber-100 text-amber-800',
+    반차: 'bg-yellow-100 text-yellow-800',
+    휴가: 'bg-pink-100 text-pink-800',
+    미고용: 'bg-slate-200 text-slate-500',
+    퇴사: 'bg-slate-200 text-slate-500',
+  };
+  if (!daily || daily.length === 0) return null;
+  const firstDate = daily[0].date;
+  const firstDow = new Date(firstDate + 'T00:00:00').getDay(); // 0=일
+
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push({ empty: true, key: `e${i}` });
+  for (const d of daily) cells.push(d);
+
+  return (
+    <div>
+      <div className="grid grid-cols-7 gap-1 mb-1">
+        {DAY_LABELS.map((d, i) => (
+          <div key={d} className={`text-[11px] font-semibold text-center py-1 ${
+            i === 0 ? 'text-red-600' : i === 6 ? 'text-blue-600' : 'text-slate-700'
+          }`}>{d}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-xs">
+        {cells.map((c, i) => {
+          if (c.empty) return <div key={c.key}></div>;
+          const day = Number(c.date.slice(-2));
+          const dow = i % 7;
+          return (
+            <div key={c.date}
+              className={`p-1.5 rounded border border-slate-200 min-h-[60px] ${statusColor[c.status] || 'bg-white'}`}>
+              <div className={`font-semibold ${dow === 0 ? 'text-red-600' : dow === 6 ? 'text-blue-600' : ''}`}>
+                {day}일
+              </div>
+              <div className="text-[10px]">{c.status}</div>
+              {c.work > 0 && (
+                <div className="text-[10px] font-mono mt-0.5">
+                  {fmtHours(c.work)}h{c.ot > 0 && <span className="text-amber-600"> (OT {fmtHours(c.ot)})</span>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
