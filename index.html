@@ -21,7 +21,7 @@
 const { useState, useEffect, useMemo, useRef, Fragment } = React;
 
 const STORAGE_KEY = 'mfg-ot-app-v1';
-const VERSION = 'V015';
+const VERSION = 'V016';
 const PERSONNEL_DEFAULTS_VERSION = 'v10-41p'; // bump when DEFAULT_PERSONNEL changes
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwRZ3A_nvX_-olruOEg_7bja79JUs0FlG7BupuGsPbfOsIIpNJ3YYhd-B_B0MaTsiW6Iw/exec';
 const DAY_LABELS = ['일','월','화','수','목','금','토'];
@@ -321,6 +321,7 @@ function App() {
     };
   });
   const [tab, setTab] = useState('upload');
+  const [syncStatus, setSyncStatus] = useState({ state: 'idle', msg: '' });
   const skipNextAutoSync = useRef(false);
   const initialLoadDone = useRef(false);
 
@@ -332,12 +333,28 @@ function App() {
     initialLoadDone.current = true;
     (async () => {
       let loaded = null;
+      setSyncStatus({ state: 'loading', msg: '로드 중...' });
+      console.log('[sync] 로드 시작:', GAS_URL);
       try {
-        const res = await fetch(`${GAS_URL}?action=latest`, { method: 'GET' });
-        const json = await res.json();
-        if (json.ok && json.data) loaded = json.data;
+        const res = await fetch(`${GAS_URL}?action=latest`, { method: 'GET', redirect: 'follow' });
+        console.log('[sync] 응답 상태:', res.status, res.statusText);
+        const txt = await res.text();
+        console.log('[sync] 응답 본문(앞 200자):', txt.slice(0, 200));
+        const json = JSON.parse(txt);
+        if (json.ok && json.data) {
+          loaded = json.data;
+          console.log('[sync] 로드 성공:', json.name, '/ 수정:', json.modified);
+          setSyncStatus({ state: 'ok', msg: `로드됨: ${json.name}` });
+        } else if (json.ok && !json.data) {
+          console.log('[sync] Drive에 백업 파일 없음 (첫 사용)');
+          setSyncStatus({ state: 'ok', msg: '백업 없음 (첫 사용)' });
+        } else {
+          console.error('[sync] 로드 응답 오류:', json);
+          setSyncStatus({ state: 'error', msg: json.error || '응답 오류' });
+        }
       } catch (err) {
-        console.error('[sync] load failed:', err);
+        console.error('[sync] 로드 실패:', err);
+        setSyncStatus({ state: 'error', msg: err.message });
       }
       skipNextAutoSync.current = true;
       setData(prev => {
@@ -351,7 +368,6 @@ function App() {
           lastUpdated: loaded.lastUpdated || {},
           personnelDefaultsVersion: loaded.personnelDefaultsVersion || prev.personnelDefaultsVersion,
         } : prev;
-        // 인원 기본값 버전이 다르면 자동 교체
         if (merged.personnelDefaultsVersion !== PERSONNEL_DEFAULTS_VERSION) {
           return {
             ...merged,
@@ -364,13 +380,14 @@ function App() {
     })();
   }, []); // eslint-disable-line
 
-  // 데이터 변경시 자동 저장 (silent, 3초 debounce)
+  // 데이터 변경시 자동 저장 (3초 debounce)
   useEffect(() => {
     if (skipNextAutoSync.current) {
       skipNextAutoSync.current = false;
       return;
     }
     const timer = setTimeout(async () => {
+      setSyncStatus({ state: 'saving', msg: '저장 중...' });
       try {
         const payload = {
           filename: 'ot-backup-current.json',
@@ -386,12 +403,23 @@ function App() {
             savedAt: new Date().toISOString(),
           },
         };
-        await fetch(GAS_URL, {
+        const res = await fetch(GAS_URL, {
           method: 'POST',
           body: JSON.stringify(payload),
+          redirect: 'follow',
         });
+        const txt = await res.text();
+        const json = JSON.parse(txt);
+        if (json.ok) {
+          console.log('[sync] 저장 성공:', json.name, '/', json.mode);
+          setSyncStatus({ state: 'ok', msg: `저장됨 (${new Date().toLocaleTimeString('ko-KR')})` });
+        } else {
+          console.error('[sync] 저장 응답 오류:', json);
+          setSyncStatus({ state: 'error', msg: json.error || '저장 실패' });
+        }
       } catch (err) {
-        console.error('[sync] save failed:', err);
+        console.error('[sync] 저장 실패:', err);
+        setSyncStatus({ state: 'error', msg: err.message });
       }
     }, 3000);
     return () => clearTimeout(timer);
@@ -407,8 +435,16 @@ function App() {
             <h1 className="text-xl font-bold">Working Hours</h1>
             <p className="text-xs text-slate-300 mt-0.5">월별 총 작업시간 · 순수 OT 시간 집계</p>
           </div>
-          <div className="text-right text-xs">
-            <span className="bg-blue-500 px-2 py-1 rounded font-mono">{VERSION}</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs flex items-center gap-1.5 text-slate-300" title={syncStatus.msg}>
+              <span className={`w-2 h-2 rounded-full ${
+                syncStatus.state === 'loading' || syncStatus.state === 'saving' ? 'bg-yellow-400 animate-pulse' :
+                syncStatus.state === 'ok' ? 'bg-emerald-400' :
+                syncStatus.state === 'error' ? 'bg-red-400' : 'bg-slate-500'
+              }`}></span>
+              <span className="text-[11px]">{syncStatus.msg}</span>
+            </span>
+            <span className="bg-blue-500 px-2 py-1 rounded font-mono text-xs">{VERSION}</span>
           </div>
         </div>
         <nav className="max-w-7xl mx-auto px-6 flex gap-1">
