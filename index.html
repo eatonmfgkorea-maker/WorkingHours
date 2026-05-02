@@ -21,7 +21,7 @@
 const { useState, useEffect, useMemo, useRef, Fragment } = React;
 
 const STORAGE_KEY = 'mfg-ot-app-v1';
-const VERSION = 'V016';
+const VERSION = 'V019';
 const PERSONNEL_DEFAULTS_VERSION = 'v10-41p'; // bump when DEFAULT_PERSONNEL changes
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwRZ3A_nvX_-olruOEg_7bja79JUs0FlG7BupuGsPbfOsIIpNJ3YYhd-B_B0MaTsiW6Iw/exec';
 const DAY_LABELS = ['일','월','화','수','목','금','토'];
@@ -387,36 +387,52 @@ function App() {
       return;
     }
     const timer = setTimeout(async () => {
+      // 안전장치: OT/휴가가 모두 비어있으면 자동저장 안함 (실수로 빈 백업이 덮어쓰는 사고 방지)
+      const hasAnyOT = data.otTCP.length > 0 || data.otFE.length > 0;
+      const hasVacations = data.vacations.length > 0;
+      if (!hasAnyOT && !hasVacations) {
+        console.log('[sync] 자동저장 스킵: OT/휴가 데이터가 모두 비어있음 (실수 방지)');
+        setSyncStatus({ state: 'idle', msg: '대기 중 (데이터 없음)' });
+        return;
+      }
       setSyncStatus({ state: 'saving', msg: '저장 중...' });
       try {
-        const payload = {
-          filename: 'ot-backup-current.json',
-          data: {
-            otTCP: data.otTCP,
-            otFE: data.otFE,
-            vacations: data.vacations,
-            personnel: data.personnel,
-            calendar: data.calendar,
-            lastUpdated: data.lastUpdated,
-            personnelDefaultsVersion: data.personnelDefaultsVersion,
-            version: VERSION,
-            savedAt: new Date().toISOString(),
-          },
+        const dataPayload = {
+          otTCP: data.otTCP,
+          otFE: data.otFE,
+          vacations: data.vacations,
+          personnel: data.personnel,
+          calendar: data.calendar,
+          lastUpdated: data.lastUpdated,
+          personnelDefaultsVersion: data.personnelDefaultsVersion,
+          version: VERSION,
+          savedAt: new Date().toISOString(),
         };
+
+        // 1. current 파일 저장
         const res = await fetch(GAS_URL, {
           method: 'POST',
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ filename: 'ot-backup-current.json', data: dataPayload }),
           redirect: 'follow',
         });
-        const txt = await res.text();
-        const json = JSON.parse(txt);
-        if (json.ok) {
-          console.log('[sync] 저장 성공:', json.name, '/', json.mode);
-          setSyncStatus({ state: 'ok', msg: `저장됨 (${new Date().toLocaleTimeString('ko-KR')})` });
-        } else {
-          console.error('[sync] 저장 응답 오류:', json);
-          setSyncStatus({ state: 'error', msg: json.error || '저장 실패' });
+        const json = JSON.parse(await res.text());
+        if (!json.ok) throw new Error(json.error || '저장 실패');
+        console.log('[sync] current 저장:', json.mode);
+
+        // 2. 일별 스냅샷 저장 (오늘 날짜로 1개, 같은 날엔 덮어쓰기)
+        const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+        const snapName = `ot-backup-${today}.json`;
+        const snapRes = await fetch(GAS_URL, {
+          method: 'POST',
+          body: JSON.stringify({ filename: snapName, data: dataPayload }),
+          redirect: 'follow',
+        });
+        const snapJson = JSON.parse(await snapRes.text());
+        if (snapJson.ok) {
+          console.log('[sync] 스냅샷 저장:', snapName);
         }
+
+        setSyncStatus({ state: 'ok', msg: `저장됨 (${new Date().toLocaleTimeString('ko-KR')})` });
       } catch (err) {
         console.error('[sync] 저장 실패:', err);
         setSyncStatus({ state: 'error', msg: err.message });
@@ -1057,7 +1073,16 @@ function ReportTab({ data }) {
   }, [data.vacations]);
 
   const report = useMemo(() => {
-    const list = data.personnel.filter(p => filter === 'all' || p.dept === filter);
+    const monthStart = monthDays[0];
+    const monthEnd = monthDays[monthDays.length - 1];
+    const list = data.personnel.filter(p => {
+      if (filter !== 'all' && p.dept !== filter) return false;
+      // 입사일이 해당 월 종료일 이후면 제외 (아직 입사 전)
+      if (p.hireDate > monthEnd) return false;
+      // 퇴사일이 해당 월 시작일 이전이면 제외 (이미 퇴사)
+      if (p.resignDate && p.resignDate < monthStart) return false;
+      return true;
+    });
     return list.map(p => {
       let totalWork = 0, totalOT = 0;
       const counts = { 근무: 0, 반차: 0, 휴가: 0, 특근: 0, 미고용: 0, 퇴사: 0 };
@@ -1168,7 +1193,6 @@ function ReportTab({ data }) {
                 {report.map((r) => {
                   const k = `${r.person.dept}__${r.person.name}__${r.person.hireDate}`;
                   const isExp = expanded === k;
-                  const isHired = monthDays.some(d => d >= r.person.hireDate && (!r.person.resignDate || d <= r.person.resignDate));
                   // 상세 일자 모음 (툴팁용)
                   const teukgeunDays = r.daily.filter(d => d.status === '특근' && d.work > 0).map(d => Number(d.date.slice(-2)));
                   const banchaDays = r.daily.filter(d => d.status === '반차').map(d => Number(d.date.slice(-2)));
@@ -1177,7 +1201,7 @@ function ReportTab({ data }) {
                     days.length ? `${label}: ${days.join(', ')}일` : `${label} 없음`;
                   return (
                     <Fragment key={k}>
-                      <tr className={`border-t border-slate-100 hover:bg-slate-50 ${!isHired ? 'opacity-40' : ''}`}>
+                      <tr className="border-t border-slate-100 hover:bg-slate-50">
                         <td className="px-3 py-2">
                           <span className={`text-xs px-2 py-0.5 rounded ${
                             r.person.dept === 'TCP' ? 'bg-purple-100 text-purple-800' : 'bg-emerald-100 text-emerald-800'
