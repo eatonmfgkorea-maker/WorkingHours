@@ -21,7 +21,7 @@
 const { useState, useEffect, useMemo, useRef, Fragment } = React;
 
 const STORAGE_KEY = 'mfg-ot-app-v1';
-const VERSION = 'V021';
+const VERSION = 'V022';
 const PERSONNEL_DEFAULTS_VERSION = 'v10-41p'; // bump when DEFAULT_PERSONNEL changes
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwRZ3A_nvX_-olruOEg_7bja79JUs0FlG7BupuGsPbfOsIIpNJ3YYhd-B_B0MaTsiW6Iw/exec';
 const DAY_LABELS = ['일','월','화','수','목','금','토'];
@@ -1270,6 +1270,24 @@ function ReportTab({ data, update }) {
       .sort((a, b) => (a.dept + a.name).localeCompare(b.dept + b.name, 'ko'));
   }, [data.otTCP, data.otFE, data.personnel, monthDays, filter]);
 
+  // 이중 집계 위험 탐지: 같은 이름의 활성 record가 2개 이상 (부서 무관)
+  const conflicts = useMemo(() => {
+    const monthStart = monthDays[0];
+    const monthEnd = monthDays[monthDays.length - 1];
+    const byName = {};
+    for (const p of data.personnel) {
+      if (p.hireDate > monthEnd) continue;
+      if (p.resignDate && p.resignDate < monthStart) continue;
+      if (filter !== 'all' && p.dept !== filter) continue;
+      if (!byName[p.name]) byName[p.name] = [];
+      byName[p.name].push(p);
+    }
+    return Object.entries(byName)
+      .filter(([_, records]) => records.length > 1)
+      .map(([name, records]) => ({ name, records }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  }, [data.personnel, monthDays, filter]);
+
   const addOrphanToPersonnel = (orphan) => {
     if (!confirm(
       `다음 인원을 인원관리에 추가하시겠습니까?\n\n` +
@@ -1350,6 +1368,54 @@ function ReportTab({ data, update }) {
           <Stat label="총 작업시간" value={`${fmtHours(totals.work)} h`} color="blue" />
           <Stat label="순수 OT시간" value={`${fmtHours(totals.ot)} h`} color="amber" />
         </div>
+
+        {conflicts.length > 0 && (
+          <div className="bg-red-50 border border-red-300 rounded-lg p-4 mb-4">
+            <h4 className="font-semibold text-red-900 mb-2">
+              🚨 이중 집계 위험 ({conflicts.length}명)
+            </h4>
+            <p className="text-xs text-red-800 mb-3">
+              같은 이름이 같은 월에 <strong>여러 record로 동시 활성</strong>되어 있어, 보고서에서 <strong>중복 계산</strong>됩니다.
+              아래 인원을 확인하고, 한쪽 record에 퇴사일(또는 부서 이동 전날)을 입력해서 기간이 겹치지 않게 정리하세요.
+            </p>
+            <div className="space-y-2">
+              {conflicts.map(c => (
+                <div key={c.name} className="bg-white rounded border border-red-200 overflow-hidden">
+                  <div className="px-3 py-1.5 bg-red-100 text-sm font-semibold text-red-900">
+                    {c.name} <span className="text-xs font-normal">— {c.records.length}건 동시 활성</span>
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 text-slate-700">
+                      <tr>
+                        <th className="text-left px-3 py-1.5 font-medium">부서</th>
+                        <th className="text-left px-3 py-1.5 font-medium">입사일</th>
+                        <th className="text-left px-3 py-1.5 font-medium">퇴사일</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {c.records.map((r, i) => (
+                        <tr key={i} className="border-t border-red-100">
+                          <td className="px-3 py-1.5">
+                            <span className={`text-xs px-2 py-0.5 rounded ${
+                              r.dept === 'TCP' ? 'bg-purple-100 text-purple-800' : 'bg-emerald-100 text-emerald-800'
+                            }`}>{r.dept}</span>
+                          </td>
+                          <td className="px-3 py-1.5 font-mono text-slate-700">{r.hireDate}</td>
+                          <td className="px-3 py-1.5 font-mono text-slate-700">
+                            {r.resignDate || <span className="text-red-600 font-semibold">없음 (재직중)</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+            <div className="text-xs text-red-700 mt-3">
+              💡 인원관리 탭 → 해당 인원의 "수정" 버튼으로 퇴사일을 채우면 됩니다.
+            </div>
+          </div>
+        )}
 
         {report.length === 0 ? (
           <div className="text-center py-12 text-slate-400 text-sm">
