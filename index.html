@@ -21,7 +21,7 @@
 const { useState, useEffect, useMemo, useRef, Fragment } = React;
 
 const STORAGE_KEY = 'mfg-ot-app-v1';
-const VERSION = 'V019';
+const VERSION = 'V021';
 const PERSONNEL_DEFAULTS_VERSION = 'v10-41p'; // bump when DEFAULT_PERSONNEL changes
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwRZ3A_nvX_-olruOEg_7bja79JUs0FlG7BupuGsPbfOsIIpNJ3YYhd-B_B0MaTsiW6Iw/exec';
 const DAY_LABELS = ['일','월','화','수','목','금','토'];
@@ -486,7 +486,7 @@ function App() {
         {tab === 'upload' && <UploadTab data={data} update={update} skipNextAutoSync={skipNextAutoSync} />}
         {tab === 'personnel' && <PersonnelTab data={data} update={update} />}
         {tab === 'calendar' && <CalendarTab data={data} update={update} />}
-        {tab === 'report' && <ReportTab data={data} />}
+        {tab === 'report' && <ReportTab data={data} update={update} />}
       </main>
     </div>
   );
@@ -746,8 +746,145 @@ function PersonnelTab({ data, update }) {
     alert(`${DEFAULT_PERSONNEL.length}명으로 교체 완료`);
   };
 
+  // 템플릿 다운로드: 파일에서 추출된 인원 + 현재 등록 인원 통합
+  const downloadTemplate = () => {
+    const seen = new Map(); // key: dept__name → personnel entry or null
+    // 1) 현재 등록 인원
+    for (const p of data.personnel) {
+      const key = `${p.dept}__${p.name}__${p.hireDate || ''}`;
+      if (!seen.has(key)) seen.set(key, { ...p, _source: '등록됨' });
+    }
+    // 2) 파일에서 추출한 인원 (등록 안 된 것만)
+    const otherSources = [
+      ...data.otTCP.map(r => ({ dept: r.dept || 'TCP', name: r.name, source: 'TCP OT' })),
+      ...data.otFE.map(r => ({ dept: r.dept || 'FE', name: r.name, source: 'FE OT' })),
+      ...data.vacations.map(v => ({ dept: v.dept, name: v.name, source: '휴가' })),
+    ];
+    const regKeys = new Set(data.personnel.map(p => `${p.dept}__${p.name}`));
+    for (const s of otherSources) {
+      if (!s.name || !s.dept) continue;
+      const baseKey = `${s.dept}__${s.name}`;
+      if (regKeys.has(baseKey)) continue;
+      const uniqKey = `${s.dept}__${s.name}__`;
+      if (!seen.has(uniqKey)) {
+        seen.set(uniqKey, { name: s.name, dept: s.dept, hireDate: '', resignDate: null, _source: `미등록 (${s.source})` });
+      }
+    }
+
+    const rows = [...seen.values()].map(p => ({
+      '입사일': p.hireDate || '',
+      '퇴사일': p.resignDate || '',
+      '성명': p.name,
+      '구분': p.dept,
+      '비고': p._source,
+    })).sort((a, b) => {
+      if (a['구분'] !== b['구분']) return a['구분'].localeCompare(b['구분']);
+      return (a['입사일'] || 'ZZ').localeCompare(b['입사일'] || 'ZZ');
+    });
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 6 }, { wch: 20 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '인원목록');
+    XLSX.writeFile(wb, `인원_템플릿_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // 현재 등록 인원만 다운로드
+  const downloadCurrent = () => {
+    const rows = data.personnel.map(p => ({
+      '입사일': p.hireDate || '',
+      '퇴사일': p.resignDate || '',
+      '성명': p.name,
+      '구분': p.dept,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 6 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '인원목록');
+    XLSX.writeFile(wb, `인원_현재_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // 엑셀 업로드로 인원 일괄 교체
+  const handlePersonnelUpload = async (file) => {
+    if (!file) return;
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+
+      const parsed = [];
+      const skipped = [];
+      for (const r of rows) {
+        const name = String(r['성명'] || '').trim();
+        const dept = String(r['구분'] || '').trim();
+        const hireDate = toYMD(r['입사일']);
+        const resignDate = toYMD(r['퇴사일']);
+        if (!name) continue;
+        if (!dept || (dept !== 'TCP' && dept !== 'FE')) {
+          skipped.push(`${name}: 구분 누락/잘못됨 (${dept || '비어있음'})`);
+          continue;
+        }
+        if (!hireDate) {
+          skipped.push(`${name}(${dept}): 입사일 누락`);
+          continue;
+        }
+        if (resignDate && resignDate < hireDate) {
+          skipped.push(`${name}(${dept}): 퇴사일이 입사일 이전`);
+          continue;
+        }
+        parsed.push({ name, dept, hireDate, resignDate: resignDate || null });
+      }
+
+      if (parsed.length === 0) {
+        alert(`업로드된 행에서 유효한 인원이 없습니다.\n\n스킵된 행: ${skipped.length}건\n${skipped.slice(0, 10).join('\n')}`);
+        return;
+      }
+
+      const msg = `엑셀에서 ${parsed.length}명 읽어옴` +
+        (skipped.length ? `\n${skipped.length}건은 스킵됨 (입사일/구분 누락 등):\n${skipped.slice(0, 5).join('\n')}${skipped.length > 5 ? `\n... 외 ${skipped.length - 5}건` : ''}` : '') +
+        `\n\n현재 ${data.personnel.length}명을 삭제하고 ${parsed.length}명으로 교체하시겠습니까?`;
+      if (!confirm(msg)) return;
+
+      update({
+        personnel: parsed,
+        personnelDefaultsVersion: PERSONNEL_DEFAULTS_VERSION,
+      });
+      alert(`${parsed.length}명으로 교체 완료`);
+    } catch (err) {
+      alert(`업로드 실패: ${err.message}`);
+    }
+  };
+
   return (
     <div className="space-y-4">
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h3 className="font-semibold text-blue-900 mb-2">📊 엑셀로 인원 일괄 관리</h3>
+        <p className="text-xs text-blue-800 mb-3">
+          OT 파일(TCP/FE) + 휴가 파일에서 추출한 인원 명단을 엑셀로 받아 입사일/퇴사일 채워서 다시 업로드하면 일괄 반영돼요.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <button onClick={downloadTemplate}
+            className="bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded text-sm font-medium flex items-center justify-center gap-2">
+            📥 템플릿 다운로드
+            <span className="text-xs opacity-75">(파일 인원 + 현재 등록)</span>
+          </button>
+          <button onClick={downloadCurrent}
+            className="bg-slate-100 hover:bg-slate-200 text-slate-800 py-2.5 rounded border border-slate-300 text-sm font-medium flex items-center justify-center gap-2">
+            📥 현재 인원 다운로드
+            <span className="text-xs text-slate-500">({data.personnel.length}명)</span>
+          </button>
+          <label className="bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded text-sm font-medium flex items-center justify-center gap-2 cursor-pointer">
+            📤 엑셀 업로드 (전체 교체)
+            <input type="file" accept=".xlsx,.xls" className="hidden"
+              onChange={(e) => { handlePersonnelUpload(e.target.files[0]); e.target.value = ''; }} />
+          </label>
+        </div>
+        <div className="text-xs text-blue-700 mt-3">
+          💡 엑셀 컬럼: <code className="bg-blue-100 px-1 rounded">입사일 / 퇴사일 / 성명 / 구분</code> (구분은 TCP 또는 FE)
+        </div>
+      </div>
+
       <div className="bg-white rounded-lg shadow-sm p-5 border border-slate-200">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-slate-800">👥 인원 관리 ({data.personnel.length}명)</h3>
@@ -1043,7 +1180,7 @@ function CalendarTab({ data, update }) {
 }
 
 // ============== Report Tab ==============
-function ReportTab({ data }) {
+function ReportTab({ data, update }) {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -1103,6 +1240,53 @@ function ReportTab({ data }) {
     for (const r of report) { work += r.totalWork; ot += r.totalOT; }
     return { work, ot };
   }, [report]);
+
+  // 인원 미등록 + OT 데이터 있는 사람 탐지
+  const orphans = useMemo(() => {
+    const monthStart = monthDays[0];
+    const monthEnd = monthDays[monthDays.length - 1];
+    const registered = new Set(data.personnel.map(p => `${p.dept}__${p.name}`));
+    const orphanMap = {};
+    for (const r of [...data.otTCP, ...data.otFE]) {
+      if (!r.date || !r.name || !r.dept) continue;
+      if (r.date < monthStart || r.date > monthEnd) continue;
+      if (filter !== 'all' && r.dept !== filter) continue;
+      const key = `${r.dept}__${r.name}`;
+      if (registered.has(key)) continue;
+      if (!orphanMap[key]) {
+        orphanMap[key] = {
+          name: r.name, dept: r.dept,
+          totalHours: 0, dates: new Set(),
+          earliestDate: r.date, latestDate: r.date,
+        };
+      }
+      orphanMap[key].totalHours += r.hours || 0;
+      orphanMap[key].dates.add(r.date);
+      if (r.date < orphanMap[key].earliestDate) orphanMap[key].earliestDate = r.date;
+      if (r.date > orphanMap[key].latestDate) orphanMap[key].latestDate = r.date;
+    }
+    return Object.values(orphanMap)
+      .map(o => ({ ...o, daysCount: o.dates.size }))
+      .sort((a, b) => (a.dept + a.name).localeCompare(b.dept + b.name, 'ko'));
+  }, [data.otTCP, data.otFE, data.personnel, monthDays, filter]);
+
+  const addOrphanToPersonnel = (orphan) => {
+    if (!confirm(
+      `다음 인원을 인원관리에 추가하시겠습니까?\n\n` +
+      `· 이름: ${orphan.name}\n` +
+      `· 부서: ${orphan.dept}\n` +
+      `· 입사일: ${orphan.earliestDate} (첫 OT 일자 기준)\n` +
+      `· 퇴사일: 없음 (재직 중으로 처리)\n\n` +
+      `필요시 인원관리 탭에서 수정 가능합니다.`
+    )) return;
+    const newPerson = {
+      name: orphan.name,
+      dept: orphan.dept,
+      hireDate: orphan.earliestDate,
+      resignDate: null,
+    };
+    update({ personnel: [...data.personnel, newPerson] });
+  };
 
   const exportExcel = () => {
     const rows = report.map(r => ({
@@ -1269,6 +1453,62 @@ function ReportTab({ data }) {
           </div>
         )}
       </div>
+
+      {orphans.length > 0 && (
+        <div className="bg-amber-50 border border-amber-300 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="font-semibold text-amber-900">
+              ⚠️ 인원 미등록 + OT 데이터 있음 ({orphans.length}명)
+            </h4>
+            <span className="text-xs text-amber-700">
+              {year}년 {month}월
+            </span>
+          </div>
+          <p className="text-xs text-amber-800 mb-3">
+            아래 인원들은 OT 파일에는 있지만 <strong>인원관리에 등록되지 않아 보고서에서 빠졌습니다</strong>.
+            클릭으로 바로 추가하거나, 인원관리 탭에서 수동으로 추가하세요.
+          </p>
+          <div className="overflow-x-auto bg-white rounded border border-amber-200">
+            <table className="w-full text-sm">
+              <thead className="bg-amber-100/60 text-amber-900">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium">부서</th>
+                  <th className="text-left px-3 py-2 font-medium">이름</th>
+                  <th className="text-left px-3 py-2 font-medium">첫 OT 일자</th>
+                  <th className="text-left px-3 py-2 font-medium">마지막 OT 일자</th>
+                  <th className="text-center px-3 py-2 font-medium">OT 일수</th>
+                  <th className="text-right px-3 py-2 font-medium">총 OT 시간</th>
+                  <th className="text-center px-3 py-2 font-medium">작업</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orphans.map(o => (
+                  <tr key={`${o.dept}__${o.name}`} className="border-t border-amber-100 hover:bg-amber-50/50">
+                    <td className="px-3 py-2">
+                      <span className={`text-xs px-2 py-0.5 rounded ${
+                        o.dept === 'TCP' ? 'bg-purple-100 text-purple-800' : 'bg-emerald-100 text-emerald-800'
+                      }`}>{o.dept}</span>
+                    </td>
+                    <td className="px-3 py-2 font-medium text-slate-900">{o.name}</td>
+                    <td className="px-3 py-2 text-xs text-slate-600 font-mono">{o.earliestDate}</td>
+                    <td className="px-3 py-2 text-xs text-slate-600 font-mono">{o.latestDate}</td>
+                    <td className="px-3 py-2 text-center text-slate-700">{o.daysCount}</td>
+                    <td className="px-3 py-2 text-right font-mono font-semibold text-amber-700">
+                      {fmtHours(o.totalHours)}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <button onClick={() => addOrphanToPersonnel(o)}
+                        className="text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 rounded">
+                        ➕ 인원 추가
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
