@@ -14,6 +14,105 @@
   .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
   .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
 </style>
+<!-- ==================== MFG 인증 시스템 (자기완결) ==================== -->
+<script>
+(function() {
+  const AUTH_URL = 'https://script.google.com/macros/s/AKfycbyhM1MJAEflRpDIKa0vWKQdcY4h1WVkI8KZqGuKjgOQDCt7iRwcsexXSmhtSdTwwepH/exec';
+  const PORTAL_URL = 'https://eatonmfgkorea-maker.github.io/MFGManagement/';
+  
+  function isAuthed() {
+    const token = localStorage.getItem('mfg_auth_token');
+    const expiry = parseInt(localStorage.getItem('mfg_auth_expiry') || '0');
+    return token && Date.now() < expiry;
+  }
+  
+  if (isAuthed()) return;
+  
+  function injectModal() {
+    const div = document.createElement('div');
+    div.id = 'mfgAuthOverlay';
+    div.style.cssText = 'position:fixed;inset:0;background:rgba(10,14,26,0.95);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:Pretendard,"Malgun Gothic",-apple-system,sans-serif;padding:1rem;';
+    div.innerHTML = `
+      <div style="background:#0f172a;border:1px solid rgba(255,255,255,0.1);border-radius:1rem;padding:2rem;width:100%;max-width:28rem;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);">
+        <div style="text-align:center;margin-bottom:1.5rem;">
+          <div style="display:inline-flex;align-items:center;justify-content:center;width:4rem;height:4rem;border-radius:1rem;background:rgba(59,130,246,0.2);border:1px solid rgba(96,165,250,0.3);margin-bottom:1rem;">
+            <svg style="width:2rem;height:2rem;color:#60a5fa;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>
+          </div>
+          <h2 style="font-size:1.5rem;font-weight:bold;color:#fff;margin:0;">로그인이 필요합니다</h2>
+          <p style="font-size:0.875rem;color:#94a3b8;margin-top:0.5rem;margin-bottom:0;">이 앱을 사용하려면 로그인해주세요</p>
+        </div>
+        <label style="display:block;font-size:0.875rem;color:#cbd5e1;margin-bottom:0.375rem;">ID</label>
+        <input id="mfgAuthUserId" type="text" autocomplete="username" placeholder="ID" style="width:100%;padding:0.625rem 1rem;background:#1e293b;border:1px solid #334155;border-radius:0.5rem;color:#fff;outline:none;font-size:1rem;margin-bottom:1rem;box-sizing:border-box;" />
+        <label style="display:block;font-size:0.875rem;color:#cbd5e1;margin-bottom:0.375rem;">비밀번호</label>
+        <input id="mfgAuthPassword" type="password" autocomplete="current-password" placeholder="••••••••" style="width:100%;padding:0.625rem 1rem;background:#1e293b;border:1px solid #334155;border-radius:0.5rem;color:#fff;outline:none;font-size:1rem;margin-bottom:1rem;box-sizing:border-box;" />
+        <div id="mfgAuthError" style="display:none;font-size:0.875rem;color:#f87171;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:0.5rem;padding:0.5rem 0.75rem;margin-bottom:1rem;"></div>
+        <button id="mfgAuthBtn" style="width:100%;padding:0.625rem;background:#2563eb;color:#fff;font-weight:600;border:none;border-radius:0.5rem;cursor:pointer;font-size:1rem;">로그인</button>
+        <div style="margin-top:1rem;text-align:center;">
+          <a href="${PORTAL_URL}" style="font-size:0.875rem;color:#94a3b8;text-decoration:none;">← 메인 포털로 돌아가기</a>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(div);
+    document.body.style.overflow = 'hidden';
+    
+    const userIdEl = document.getElementById('mfgAuthUserId');
+    const pwdEl = document.getElementById('mfgAuthPassword');
+    const btnEl = document.getElementById('mfgAuthBtn');
+    const errEl = document.getElementById('mfgAuthError');
+    
+    setTimeout(() => userIdEl.focus(), 100);
+    
+    async function doLogin() {
+      const userId = userIdEl.value.trim();
+      const password = pwdEl.value;
+      if (!userId || !password) {
+        errEl.textContent = 'ID와 비밀번호를 입력해주세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+      btnEl.disabled = true;
+      btnEl.textContent = '로그인 중...';
+      errEl.style.display = 'none';
+      try {
+        const res = await fetch(AUTH_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'login', userId, password })
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          errEl.textContent = data.error || '로그인 실패';
+          errEl.style.display = 'block';
+          btnEl.disabled = false;
+          btnEl.textContent = '로그인';
+          return;
+        }
+        localStorage.setItem('mfg_auth_token', data.token);
+        localStorage.setItem('mfg_auth_user', data.userId);
+        localStorage.setItem('mfg_auth_expiry', String(data.expiresAt));
+        document.getElementById('mfgAuthOverlay').remove();
+        document.body.style.overflow = '';
+      } catch (e) {
+        errEl.textContent = '네트워크 오류: ' + e.message;
+        errEl.style.display = 'block';
+        btnEl.disabled = false;
+        btnEl.textContent = '로그인';
+      }
+    }
+    
+    btnEl.addEventListener('click', doLogin);
+    pwdEl.addEventListener('keypress', (e) => { if (e.key === 'Enter') doLogin(); });
+    userIdEl.addEventListener('keypress', (e) => { if (e.key === 'Enter') pwdEl.focus(); });
+  }
+  
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectModal);
+  } else {
+    injectModal();
+  }
+})();
+</script>
+<!-- ==================== /MFG 인증 시스템 ==================== -->
 </head>
 <body class="bg-slate-50">
 <div id="root"></div>
